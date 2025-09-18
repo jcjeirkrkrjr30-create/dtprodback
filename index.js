@@ -189,7 +189,7 @@ app.use('/api/contact', (req, res, next) => {
 }, contactRoutes);
 
 // Catch-all for undefined API routes
-app.use('/api/*', (req, res) => {
+app.use('/api', (req, res) => {
   console.log('404 - API endpoint not found:', req.method, req.originalUrl);
   console.log('Available routes: /admin, /auth, /pages, /products, /orders, /users, /cart, /categories, /contact');
   res.status(404).json({ 
