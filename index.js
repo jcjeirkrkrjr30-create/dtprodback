@@ -27,17 +27,17 @@ const corsOptions = {
       'https://dtprod.vercel.app',
       'http://localhost:3000',
       'http://localhost:3001',
-      'https://localhost:3000',
     ];
     
-    // Allow Vercel preview deployments (any subdomain of vercel.app)
-    const isVercelPreview = /^https:\/\/.*\.vercel\.app$/.test(origin);
+    // Allow Vercel preview deployments
+    const isVercelPreview = origin && origin.includes('.vercel.app') && origin.startsWith('https://');
     
     if (allowedOrigins.includes(origin) || isVercelPreview) {
+      console.log('CORS allowing origin:', origin);
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      callback(null, true); // Temporarily allow all origins for debugging
     }
   },
   credentials: true,
@@ -48,20 +48,21 @@ const corsOptions = {
     'X-Requested-With',
     'Accept',
     'Origin',
-    'Access-Control-Allow-Origin'
   ],
-  exposedHeaders: ['Authorization'],
   optionsSuccessStatus: 200,
-  preflightContinue: false,
 };
 
 // Middleware
 app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
-
 app.use(express.json({ limit: '10mb' }));
+
+// Debug middleware - remove after testing
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log('Origin:', req.headers.origin);
+  console.log('User-Agent:', req.headers['user-agent']);
+  next();
+});
 
 // Rate limiting with adjusted settings for production
 const limiter = rateLimit({
