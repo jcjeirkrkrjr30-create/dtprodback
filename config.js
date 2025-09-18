@@ -3,7 +3,7 @@ require('dotenv').config();
 const config = {
   db: {
     host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,  // Added port for Railway compatibility
+    port: process.env.DB_PORT || 3306, // Added port support for external connections like Railway
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'rent_website',
