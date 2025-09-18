@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: dtprod-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://dtprod.vercel.app
+    autoDeploy: false
+    disk:
+      name: dtprod-disk
+      mountPath: /app/uploads
+      sizeGB: 1
