@@ -1,3 +1,4 @@
+// src/server/index.js (updated for production CORS)
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -16,7 +17,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://dtprod.vercel.app', // Updated for production Vercel frontend; fallback for local
+  origin: process.env.FRONTEND_URL || 'https://dtprod.vercel.app', // Updated default to production frontend URL
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
