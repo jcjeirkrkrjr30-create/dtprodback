@@ -105,8 +105,9 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/contact', contactRoutes);
 
-// 404 handler for API routes
-app.use('/api/*', (req, res) => {
+// 404 handler for API routes - using a more specific pattern
+app.use('/api', (req, res, next) => {
+  // If no route matched, return 404
   res.status(404).json({ error: 'API endpoint not found' });
 });
 
