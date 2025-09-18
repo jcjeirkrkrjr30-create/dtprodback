@@ -19,21 +19,48 @@ app.set('trust proxy', 1);
 
 // CORS configuration for production
 const corsOptions = {
-  origin: [
-    process.env.FRONTEND_URL || 'https://dtprod.vercel.app',
-    'http://localhost:3000', // Keep for local development
-    'https://dtprod.vercel.app',
-    /\.vercel\.app$/, // Allow all Vercel preview deployments
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://dtprod.vercel.app',
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://localhost:3000',
+    ];
+    
+    // Allow Vercel preview deployments (any subdomain of vercel.app)
+    const isVercelPreview = /^https:\/\/.*\.vercel\.app$/.test(origin);
+    
+    if (allowedOrigins.includes(origin) || isVercelPreview) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Allow-Origin'
+  ],
   exposedHeaders: ['Authorization'],
   optionsSuccessStatus: 200,
+  preflightContinue: false,
 };
 
 // Middleware
 app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
+
 app.use(express.json({ limit: '10mb' }));
 
 // Rate limiting with adjusted settings for production
