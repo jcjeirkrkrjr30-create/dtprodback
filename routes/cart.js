@@ -1,10 +1,24 @@
 const express = require('express');
 const { query } = require('../utils/db');
 const { authenticate, restrictTo } = require('../utils/auth');
+const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
+// Rate limiter configuration: increased to allow more requests
+const cartLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Allow 100 requests per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests, please try again later.',
+});
+
+// Simple in-memory cache for cart data
+const cache = new Map();
+const CACHE_TTL = 5 * 1000; // 5 seconds
+
 // Add to cart
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, cartLimiter, async (req, res) => {
   try {
     const { product_id, start_date, end_date, quantity } = req.body;
     const userId = req.user ? req.user.id : null;
@@ -28,7 +42,10 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Quantity must be a positive integer' });
     }
 
-    const [product] = await query('SELECT price_per_day, sale_price FROM products WHERE id = ? AND available = TRUE', [product_id]);
+    const [product] = await query(
+      'SELECT price_per_day, sale_price FROM products WHERE id = ? AND available = TRUE',
+      [product_id]
+    );
     console.log('Product query result:', product);
     if (!product) {
       return res.status(404).json({ error: 'Product not found or unavailable' });
@@ -41,6 +58,10 @@ router.post('/', authenticate, async (req, res) => {
     );
     console.log('Insert cart result:', result);
 
+    // Invalidate cache for this user or guest
+    const cacheKey = userId ? `cart:${userId}` : `cart:guest:${guestSessionId}`;
+    cache.delete(cacheKey);
+
     res.json({ message: 'Product added to cart', cartId: result.insertId });
   } catch (error) {
     console.error('Add to cart error:', error);
@@ -49,7 +70,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // Get cart items
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, cartLimiter, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const guestSessionId = req.guestSessionId;
@@ -60,12 +81,22 @@ router.get('/', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'User ID or guest session ID required' });
     }
 
+    const cacheKey = userId ? `cart:${userId}` : `cart:guest:${guestSessionId}`;
+    const cached = cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      console.log('Returning cached cart:', cached.data);
+      return res.json(cached.data);
+    }
+
     const queryStr = userId
       ? 'SELECT c.*, c.price_snapshot as price_per_day, p.name, p.image_url FROM cart c JOIN products p ON c.product_id = p.id WHERE c.user_id = ?'
       : 'SELECT c.*, c.price_snapshot as price_per_day, p.name, p.image_url FROM cart c JOIN products p ON c.product_id = p.id WHERE c.guest_session_id = ?';
     const params = userId ? [userId] : [guestSessionId];
     const cartItems = await query(queryStr, params);
     console.log('Cart items fetched:', cartItems);
+
+    // Store in cache
+    cache.set(cacheKey, { data: cartItems, timestamp: Date.now() });
 
     res.json(cartItems);
   } catch (error) {
@@ -75,7 +106,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // Update cart item
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', authenticate, cartLimiter, async (req, res) => {
   try {
     const { quantity } = req.body;
     const cartId = req.params.id;
@@ -102,6 +133,10 @@ router.put('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Cart item not found' });
     }
 
+    // Invalidate cache
+    const cacheKey = userId ? `cart:${userId}` : `cart:guest:${guestSessionId}`;
+    cache.delete(cacheKey);
+
     res.json({ message: 'Cart item updated' });
   } catch (error) {
     console.error('Update cart error:', error);
@@ -110,7 +145,7 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 // Remove from cart
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authenticate, cartLimiter, async (req, res) => {
   try {
     const cartId = req.params.id;
     const userId = req.user ? req.user.id : null;
@@ -133,25 +168,31 @@ router.delete('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Cart item not found' });
     }
 
+    // Invalidate cache
+    const cacheKey = userId ? `cart:${userId}` : `cart:guest:${guestSessionId}`;
+    cache.delete(cacheKey);
+
     res.json({ message: 'Cart item removed' });
   } catch (error) {
-    console.error('Remove from cart error:', error);
-    res.status(500).json({ error: `Failed to remove cart item: ${error.message}` });
+    console.error('Remove cart error:', error);
+    res.status(500).json({ error: 'Failed to remove cart item' });
   }
 });
 
 // Get all cart items (admin only)
-router.get('/all', authenticate, restrictTo('admin'), async (req, res) => {
+router.get('/all', authenticate, restrictTo('admin'), cartLimiter, async (req, res) => {
   try {
     const cartItems = await query(
-      'SELECT c.*, p.name, p.price_per_day, p.sale_price, c.price_snapshot, p.image_url FROM cart c JOIN products p ON c.product_id = p.id'
+      'SELECT c.*, p.name, p.image_url, COALESCE(u.email, c.guest_session_id) as user_identifier ' +
+      'FROM cart c ' +
+      'JOIN products p ON c.product_id = p.id ' +
+      'LEFT JOIN users u ON c.user_id = u.id'
     );
     console.log('All cart items fetched:', cartItems);
-
     res.json(cartItems);
   } catch (error) {
     console.error('Fetch all cart items error:', error);
-    res.status(500).json({ error: 'Failed to fetch cart items' });
+    res.status(500).json({ error: 'Failed to fetch all cart items' });
   }
 });
 
