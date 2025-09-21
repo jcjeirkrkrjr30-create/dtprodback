@@ -73,7 +73,7 @@ router.post('/', authenticate, async (req, res) => {
           }
         }
 
-        const [product] = await query('SELECT id, price_per_day, image_url FROM products WHERE id = ? AND available = TRUE', [productId]);
+        const [product] = await query('SELECT id, price_per_day FROM products WHERE id = ? AND available = TRUE', [productId]);
         console.log('Product query result:', product);
         if (!product) {
           throw new Error(`Product ${productId} not found or unavailable`);
@@ -97,8 +97,8 @@ router.post('/', authenticate, async (req, res) => {
         const totalPrice = days * product.price_per_day * qty;
 
         await query(
-          'INSERT INTO order_items (order_id, product_id, product_name, start_date, end_date, quantity, price_per_day, total_price, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [orderId, product.id, cartItem ? cartItem.product_name : product.name, startDate, endDate, qty, product.price_per_day, totalPrice, product.image_url]
+          'INSERT INTO order_items (order_id, product_id, start_date, end_date, quantity, price_per_day, total_price) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [orderId, product.id, startDate, endDate, qty, product.price_per_day, totalPrice]
         );
 
         if (cartId) {
