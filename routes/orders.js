@@ -81,56 +81,52 @@ router.post('/', authenticate, async (req, res) => {
 
         const startDate = cartItem ? cartItem.start_date : start_date;
         const endDate = cartItem ? cartItem.end_date : end_date;
-        const itemQuantity = cartItem ? cartItem.quantity : quantity || 1;
+        const qty = cartItem ? cartItem.quantity : quantity;
 
-        if (!startDate || !endDate) {
-          throw new Error('Start date and end date are required');
-        }
-        if (new Date(startDate) >= new Date(endDate)) {
-          throw new Error('End date must be after start date');
-        }
-        if (new Date(startDate) < new Date().setHours(0, 0, 0, 0)) {
-          throw new Error('Start date cannot be in the past');
-        }
-        if (!Number.isInteger(itemQuantity) || itemQuantity < 1) {
-          throw new Error('Quantity must be a positive integer');
+        if (!startDate || !endDate || !qty) {
+          throw new Error('Missing required fields: start_date, end_date, quantity');
         }
 
-        const days = Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24));
-        const totalPrice = days * product.price_per_day * itemQuantity;
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
+          throw new Error('Invalid date range');
+        }
+
+        const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+        const totalPrice = days * product.price_per_day * qty;
 
         await query(
-          'INSERT INTO order_items (order_id, product_id, start_date, end_date, quantity, price_per_day, total_price) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [orderId, productId, startDate, endDate, itemQuantity, product.price_per_day, totalPrice]
+          'INSERT INTO order_items (order_id, product_id, product_name, start_date, end_date, quantity, price_per_day, total_price, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [orderId, product.id, cartItem ? cartItem.product_name : product.name, startDate, endDate, qty, product.price_per_day, totalPrice, product.image_url]
         );
 
         if (cartId) {
-          const deleteResult = await query(
-            userId ? 'DELETE FROM cart WHERE id = ? AND user_id = ?' : 'DELETE FROM cart WHERE id = ? AND guest_session_id = ?',
-            userId ? [cartId, userId] : [cartId, guestSessionId]
-          );
-          console.log('Delete cart item result:', deleteResult);
+          const deleteQuery = userId
+            ? 'DELETE FROM cart WHERE id = ? AND user_id = ?'
+            : 'DELETE FROM cart WHERE id = ? AND guest_session_id = ?';
+          const deleteParams = userId ? [cartId, userId] : [cartId, guestSessionId];
+          await query(deleteQuery, deleteParams);
         }
       }
 
       await pool.query('COMMIT');
-      res.status(201).json({ message: 'Order placed successfully', orderId });
+      console.log('Order placed successfully:', { orderId });
+      res.json({ message: 'Order placed successfully', orderId });
     } catch (error) {
       await pool.query('ROLLBACK');
-      throw error;
+      console.error('Order transaction error:', error);
+      res.status(500).json({ error: 'Failed to place order', details: error.message });
     }
   } catch (error) {
     console.error('Order creation error:', error);
-    res.status(500).json({ error: `Failed to place order: ${error.message}` });
+    res.status(500).json({ error: 'Failed to place order', details: error.message });
   }
 });
 
-// Get user's orders
+// Get current user's orders (authenticated)
 router.get('/my-orders', authenticate, async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
     const orders = await query(
       `SELECT o.*, 
               GROUP_CONCAT(
@@ -154,6 +150,7 @@ router.get('/my-orders', authenticate, async (req, res) => {
        ORDER BY o.created_at DESC`,
       [req.user.id]
     );
+
     const formattedOrders = orders.map(order => ({
       ...order,
       items: order.items
@@ -184,11 +181,79 @@ router.get('/my-orders', authenticate, async (req, res) => {
           }).filter(item => item !== null && item.product_id && item.product_name)
         : [],
     }));
+
     console.log('Fetched user orders:', formattedOrders);
     res.json(formattedOrders);
   } catch (error) {
     console.error('Fetch user orders error:', error);
     res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+  }
+});
+
+// Get orders for a specific user (admin only)
+router.get('/user/:userId', authenticate, restrictTo('admin'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const orders = await query(
+      `SELECT o.*, 
+              GROUP_CONCAT(
+                CONCAT(
+                  oi.product_id, ':',
+                  COALESCE(REPLACE(p.name, ':', '::'), 'Unknown'), ':',
+                  COALESCE(oi.start_date, ''), ':',
+                  COALESCE(oi.end_date, ''), ':',
+                  oi.quantity, ':',
+                  oi.price_per_day, ':',
+                  oi.total_price, ':',
+                  COALESCE(p.image_url, '')
+                )
+                SEPARATOR '|||'
+              ) AS items
+       FROM orders o
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE o.user_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [userId]
+    );
+
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      items: order.items
+        ? order.items.split('|||').map(item => {
+            const parts = item.split(':');
+            if (parts.length < 7) {
+              console.warn('Invalid item format:', { item, orderId: order.id });
+              return null;
+            }
+            let [product_id, name, start_date, end_date, quantity, price_per_day, total_price, ...imageParts] = parts;
+            const image_url = imageParts.join(':');
+            name = name.replace('::', ':').replace(/[^a-zA-Z0-9\s-_]/g, '');
+            if (!name || name.trim() === '') {
+              console.warn('Invalid product name:', { name, item, orderId: order.id });
+              return null;
+            }
+            const isValidUrl = image_url && image_url.startsWith('http');
+            return {
+              product_id: parseInt(product_id) || 0,
+              product_name: name,
+              start_date: start_date || null,
+              end_date: end_date || null,
+              quantity: parseInt(quantity) || 0,
+              price_per_day: parseFloat(price_per_day) || 0,
+              total_price: parseFloat(total_price) || 0,
+              image_url: isValidUrl ? image_url : null,
+            };
+          }).filter(item => item !== null && item.product_id && item.product_name)
+        : [],
+    }));
+
+    console.log('Fetched orders for user:', { userId, orders: formattedOrders });
+    res.json(formattedOrders);
+  } catch (error) {
+    console.error('Fetch user orders error:', error);
+    res.status(500).json({ error: 'Failed to fetch user orders', details: error.message });
   }
 });
 
