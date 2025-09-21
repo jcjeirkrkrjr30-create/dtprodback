@@ -86,4 +86,42 @@ router.get('/', authenticate, restrictTo('admin'), async (req, res) => {
   }
 });
 
+// Update user email by admin (admin only)
+router.put('/:id/email', authenticate, restrictTo('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    const [existing] = await query('SELECT id FROM users WHERE email = ? AND id != ?', [email, id]);
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: 'Email already in use' });
+    }
+    await query('UPDATE users SET email = ? WHERE id = ?', [email, id]);
+    res.json({ message: 'User email updated' });
+  } catch (error) {
+    console.error('User email update error:', error);
+    res.status(500).json({ error: 'Failed to update user email' });
+  }
+});
+
+// Update user password by admin (admin only)
+router.put('/:id/password', authenticate, restrictTo('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+    await query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, id]);
+    res.json({ message: 'User password updated' });
+  } catch (error) {
+    console.error('User password update error:', error);
+    res.status(500).json({ error: 'Failed to update user password' });
+  }
+});
+
 module.exports = router;
