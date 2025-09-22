@@ -1,4 +1,4 @@
-// src/server/routes/products.js (updated)
+// src/server/routes/products.js
 const express = require('express');
 const { query } = require('../utils/db');
 const { authenticate, restrictTo } = require('../utils/auth');
@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const categoryId = req.query.category ? parseInt(req.query.category) : null;
-    let sql = 'SELECT * FROM products WHERE available = TRUE';
+    let sql = 'SELECT * FROM products WHERE available = TRUE AND is_deleted = FALSE';
     const params = [];
     if (categoryId) {
       sql += ' AND category_id = ?';
@@ -25,10 +25,22 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get deleted products (admin only)
+router.get('/deleted', authenticate, restrictTo('admin'), async (req, res) => {
+  try {
+    const products = await query('SELECT * FROM products WHERE is_deleted = TRUE ORDER BY created_at DESC');
+    console.log('Fetched deleted products:', products);
+    res.json(products);
+  } catch (error) {
+    console.error('Deleted products fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch deleted products', details: error.message });
+  }
+});
+
 // Get single product (public)
 router.get('/:id', async (req, res) => {
   try {
-    const products = await query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+    const products = await query('SELECT * FROM products WHERE id = ? AND is_deleted = FALSE', [req.params.id]);
     if (!products || products.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
@@ -93,7 +105,7 @@ router.post('/', authenticate, restrictTo('admin'), async (req, res) => {
     }
 
     const result = await query(
-      'INSERT INTO products (name, description, price_per_day, sale_price, image_url, gallery_images, available, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO products (name, description, price_per_day, sale_price, image_url, gallery_images, available, category_id, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE)',
       [name, description, regPrice, saleP, image_url, gallery_images, !!available, catId]
     );
     if (!result || !result.insertId) {
@@ -113,7 +125,7 @@ router.put('/:id', authenticate, restrictTo('admin'), async (req, res) => {
     const { name, description, regular_price, sale_price, imageBase64, galleryBase64 = [], available = true, category_id } = req.body;
     console.log('PUT /api/products/:id - Request body:', { id: req.params.id, name, description, regular_price, sale_price, imageBase64, galleryBase64: galleryBase64.length, available, category_id });
 
-    const products = await query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+    const products = await query('SELECT * FROM products WHERE id = ? AND is_deleted = FALSE', [req.params.id]);
     if (!products || products.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
@@ -187,7 +199,7 @@ router.put('/:id', authenticate, restrictTo('admin'), async (req, res) => {
     const values = [...Object.values(updateFields), req.params.id];
 
     const result = await query(
-      `UPDATE products SET ${setClause} WHERE id = ?`,
+      `UPDATE products SET ${setClause} WHERE id = ? AND is_deleted = FALSE`,
       values
     );
     if (!result || result.affectedRows === 0) {
@@ -204,15 +216,30 @@ router.put('/:id', authenticate, restrictTo('admin'), async (req, res) => {
 // Delete product (admin only)
 router.delete('/:id', authenticate, restrictTo('admin'), async (req, res) => {
   try {
-    const result = await query('DELETE FROM products WHERE id = ?', [req.params.id]);
+    const result = await query('UPDATE products SET is_deleted = TRUE WHERE id = ? AND is_deleted = FALSE', [req.params.id]);
     if (!result || result.affectedRows === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    console.log('Delete product result:', result);
+    console.log('Soft delete product result:', result);
     res.json({ message: 'Product deleted' });
   } catch (error) {
     console.error('Product delete error:', error);
     res.status(500).json({ error: 'Failed to delete product', details: error.message });
+  }
+});
+
+// Restore product (admin only)
+router.put('/:id/restore', authenticate, restrictTo('admin'), async (req, res) => {
+  try {
+    const result = await query('UPDATE products SET is_deleted = FALSE WHERE id = ? AND is_deleted = TRUE', [req.params.id]);
+    if (!result || result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found in trash' });
+    }
+    console.log('Restore product result:', result);
+    res.json({ message: 'Product restored' });
+  } catch (error) {
+    console.error('Product restore error:', error);
+    res.status(500).json({ error: 'Failed to restore product', details: error.message });
   }
 });
 
