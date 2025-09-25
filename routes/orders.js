@@ -3,6 +3,11 @@ const { query, pool } = require('../utils/db');
 const { authenticate, restrictTo } = require('../utils/auth');
 const router = express.Router();
 
+// Generate a UUID for secret key
+const generateSecretKey = () => {
+  return require('crypto').randomUUID();
+};
+
 // Place an order with multiple cart items
 router.post('/', authenticate, async (req, res) => {
   try {
@@ -19,7 +24,7 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'User ID or guest session ID required' });
     }
 
-    let orderName, orderEmail, orderAddress, orderPhone;
+    let orderName, orderEmail, orderAddress, orderPhone, secretKey;
 
     if (userId) {
       const [user] = await query('SELECT username, email, address, phone FROM users WHERE id = ?', [userId]);
@@ -45,14 +50,15 @@ router.post('/', authenticate, async (req, res) => {
       orderEmail = email;
       orderAddress = address;
       orderPhone = phone;
+      secretKey = generateSecretKey(); // Generate secret key for guest orders
     }
 
     await pool.query('START TRANSACTION');
 
     try {
       const orderResult = await query(
-        'INSERT INTO orders (user_id, guest_session_id, name, email, address, phone, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [userId, userId ? null : guestSessionId, orderName, orderEmail, orderAddress, orderPhone, 'pending']
+        'INSERT INTO orders (user_id, guest_session_id, name, email, address, phone, status, secret_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [userId, userId ? null : guestSessionId, orderName, orderEmail, orderAddress, orderPhone, 'pending', secretKey || null]
       );
       const orderId = orderResult.insertId;
       console.log('Insert order result:', orderResult);
@@ -111,8 +117,8 @@ router.post('/', authenticate, async (req, res) => {
       }
 
       await pool.query('COMMIT');
-      console.log('Order placed successfully:', { orderId });
-      res.json({ message: 'Order placed successfully', orderId });
+      console.log('Order placed successfully:', { orderId, secretKey });
+      res.json({ message: 'Order placed successfully', orderId, secretKey });
     } catch (error) {
       await pool.query('ROLLBACK');
       console.error('Order transaction error:', error);
@@ -121,6 +127,76 @@ router.post('/', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Order creation error:', error);
     res.status(500).json({ error: 'Failed to place order', details: error.message });
+  }
+});
+
+// Track an order by secret key (for guest users)
+router.get('/track/:secretKey', async (req, res) => {
+  try {
+    const { secretKey } = req.params;
+    const [order] = await query(
+      `SELECT o.*, 
+              GROUP_CONCAT(
+                CONCAT(
+                  oi.product_id, ':',
+                  COALESCE(REPLACE(p.name, ':', '::'), 'Unknown'), ':',
+                  COALESCE(oi.start_date, ''), ':',
+                  COALESCE(oi.end_date, ''), ':',
+                  oi.quantity, ':',
+                  oi.price_per_day, ':',
+                  oi.total_price, ':',
+                  COALESCE(p.image_url, '')
+                )
+                SEPARATOR '|||'
+              ) AS items
+       FROM orders o
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE o.secret_key = ?
+       GROUP BY o.id`,
+      [secretKey]
+    );
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const formattedOrder = {
+      ...order,
+      items: order.items
+        ? order.items.split('|||').map(item => {
+            const parts = item.split(':');
+            if (parts.length < 7) {
+              console.warn('Invalid item format:', { item, orderId: order.id });
+              return null;
+            }
+            let [product_id, name, start_date, end_date, quantity, price_per_day, total_price, ...imageParts] = parts;
+            const image_url = imageParts.join(':');
+            name = name.replace('::', ':').replace(/[^a-zA-Z0-9\s-_]/g, '');
+            if (!name || name.trim() === '') {
+              console.warn('Invalid product name:', { name, item, orderId: order.id });
+              return null;
+            }
+            const isValidUrl = image_url && image_url.startsWith('http');
+            return {
+              product_id: parseInt(product_id) || 0,
+              product_name: name,
+              start_date: start_date || null,
+              end_date: end_date || null,
+              quantity: parseInt(quantity) || 0,
+              price_per_day: parseFloat(price_per_day) || 0,
+              total_price: parseFloat(total_price) || 0,
+              image_url: isValidUrl ? image_url : null,
+            };
+          }).filter(item => item !== null && item.product_id && item.product_name)
+        : [],
+    };
+
+    console.log('Fetched order by secret key:', formattedOrder);
+    res.json(formattedOrder);
+  } catch (error) {
+    console.error('Track order error:', error);
+    res.status(500).json({ error: 'Failed to track order', details: error.message });
   }
 });
 
