@@ -1,4 +1,3 @@
-// src/server/routes/products.js
 const express = require('express');
 const { query } = require('../utils/db');
 const { authenticate, restrictTo } = require('../utils/auth');
@@ -65,8 +64,8 @@ router.post('/', authenticate, restrictTo('admin'), async (req, res) => {
     if (isNaN(regPrice) || regPrice <= 0) {
       return res.status(400).json({ error: 'Invalid regular_price: must be a positive number' });
     }
-    const saleP = sale_price ? parseFloat(sale_price) : null;
-    if (sale_price && (isNaN(saleP) || saleP <= 0)) {
+    const saleP = sale_price !== undefined && sale_price !== '' ? parseFloat(sale_price) : null;
+    if (sale_price !== undefined && sale_price !== '' && (isNaN(saleP) || saleP <= 0)) {
       return res.status(400).json({ error: 'Invalid sale_price: must be a positive number' });
     }
     if (Array.isArray(galleryBase64) && galleryBase64.length > 10) {
@@ -140,8 +139,11 @@ router.put('/:id', authenticate, restrictTo('admin'), async (req, res) => {
       }
       updateFields.price_per_day = price;
     }
-    if (sale_price !== undefined && sale_price !== '') {
-      updateFields.sale_price = parseFloat(sale_price) || null;
+    if (sale_price !== undefined) {
+      updateFields.sale_price = sale_price === '' || sale_price === null ? null : parseFloat(sale_price);
+      if (updateFields.sale_price !== null && (isNaN(updateFields.sale_price) || updateFields.sale_price <= 0)) {
+        return res.status(400).json({ error: 'Invalid sale_price: must be a positive number or empty to clear' });
+      }
     }
     if (category_id !== undefined) {
       updateFields.category_id = category_id ? parseInt(category_id) : null;
