@@ -221,27 +221,27 @@ router.get('/stats', authenticate, restrictTo('admin'), async (req, res) => {
 router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let periodCol, dateFormat, timeFilter;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(o.created_at)';
-        dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m-%d")';
+        periodCol = 'DATE(o.created_at)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(o.created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY), "%Y-%m-%d")';
+        periodCol = 'DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(o.created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m")';
+        periodCol = "DATE_FORMAT(o.created_at, '%Y-%m')";
+        dateFormat = periodCol;
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(o.created_at)';
-        dateFormat = 'CAST(YEAR(o.created_at) AS CHAR)';
+        periodCol = 'YEAR(o.created_at)';
+        dateFormat = `CAST(${periodCol} AS CHAR)`;
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
@@ -257,7 +257,7 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
       WHERE o.status IN ('approved', 'completed') AND ${timeFilter}
-      GROUP BY ${groupBy}
+      GROUP BY ${periodCol}
       ORDER BY MIN(o.created_at) ASC
     `);
 
@@ -281,27 +281,27 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
 router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let periodCol, dateFormat, timeFilter;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(created_at)';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+        periodCol = 'DATE(created_at)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        periodCol = 'DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        periodCol = "DATE_FORMAT(created_at, '%Y-%m')";
+        dateFormat = periodCol;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(created_at)';
-        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        periodCol = 'YEAR(created_at)';
+        dateFormat = `CAST(${periodCol} AS CHAR)`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
@@ -314,7 +314,7 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
         COUNT(id) as newUsers
       FROM users
       WHERE role = 'client' AND ${timeFilter}
-      GROUP BY ${groupBy}
+      GROUP BY ${periodCol}
       ORDER BY MIN(created_at) ASC
     `);
 
@@ -336,27 +336,27 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
 router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let periodCol, dateFormat, timeFilter;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(created_at)';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+        periodCol = 'DATE(created_at)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        periodCol = 'DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY)';
+        dateFormat = `DATE_FORMAT(${periodCol}, '%Y-%m-%d')`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        periodCol = "DATE_FORMAT(created_at, '%Y-%m')";
+        dateFormat = periodCol;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(created_at)';
-        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        periodCol = 'YEAR(created_at)';
+        dateFormat = `CAST(${periodCol} AS CHAR)`;
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
@@ -373,7 +373,7 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelledOrders
       FROM orders
       WHERE ${timeFilter}
-      GROUP BY ${groupBy}
+      GROUP BY ${periodCol}
       ORDER BY MIN(created_at) ASC
     `);
 
