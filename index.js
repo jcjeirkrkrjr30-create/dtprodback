@@ -78,6 +78,16 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Enhanced rate limit: Increased to 1000 per 15 min globally for bursts; skip for admin/auth to prevent dashboard 429s
+app.use(rateLimit({ 
+  windowMs: 15 * 60 * 1000, 
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/api/admin') || req.path.startsWith('/api/auth'), // Bypass for low-risk authenticated routes
+  message: 'Too many requests, please try again later.',
+}));
+
 // Enhanced debug middleware
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
@@ -86,103 +96,21 @@ app.use((req, res, next) => {
   console.log('User-Agent:', req.headers['user-agent']);
   console.log('Content-Type:', req.headers['content-type']);
   console.log('Authorization:', req.headers.authorization ? 'Present' : 'Missing');
-  
-  // Log body for POST/PUT requests (but limit size)
-  if ((req.method === 'POST' || req.method === 'PUT') && req.body) {
-    const bodyStr = JSON.stringify(req.body);
-    console.log('Body:', bodyStr.length > 200 ? bodyStr.substring(0, 200) + '...' : bodyStr);
-  }
-  
   next();
 });
 
-// Rate limiting with adjusted settings for production
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 300 : 1000, // More generous limits
-  message: { error: 'Too many requests, please try again later' },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => {
-    // Skip rate limiting for health checks and specific paths
-    const skipPaths = ['/health', '/', '/api/health'];
-    return skipPaths.includes(req.path);
-  },
-});
-
-app.use(limiter);
+// Input sanitization
 app.use(sanitizeInput);
 
-// Health check endpoints
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.status(200).json({ 
-    message: 'DTProd API is running', 
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// API Routes - with enhanced logging
-app.use('/api/admin', (req, res, next) => {
-  console.log('Admin route accessed:', req.method, req.path);
-  next();
-}, adminRoutes);
-
-app.use('/api/auth', (req, res, next) => {
-  console.log('Auth route accessed:', req.method, req.path);
-  next();
-}, authRoutes);
-
-app.use('/api/pages', (req, res, next) => {
-  console.log('Pages route accessed:', req.method, req.path);
-  next();
-}, pagesRoutes);
-
-app.use('/api/products', (req, res, next) => {
-  console.log('Products route accessed:', req.method, req.path);
-  next();
-}, productsRoutes);
-
-app.use('/api/orders', (req, res, next) => {
-  console.log('Orders route accessed:', req.method, req.path);
-  next();
-}, ordersRoutes);
-
-app.use('/api/users', (req, res, next) => {
-  console.log('Users route accessed:', req.method, req.path);
-  next();
-}, usersRoutes);
-
-app.use('/api/cart', (req, res, next) => {
-  console.log('Cart route accessed:', req.method, req.path);
-  next();
-}, cartRoutes);
-
-app.use('/api/categories', (req, res, next) => {
-  console.log('Categories route accessed:', req.method, req.path);
-  next();
-}, categoriesRoutes);
-
+// Routes
+app.use('/api/admin', adminRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/pages', pagesRoutes);
+app.use('/api/products', productsRoutes);
+app.use('/api/orders', ordersRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/cart', cartRoutes);
+app.use('/api/categories', categoriesRoutes);
 app.use('/api/contact', (req, res, next) => {
   console.log('Contact route accessed:', req.method, req.path);
   next();
