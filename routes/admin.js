@@ -21,22 +21,22 @@ router.get('/stats', authenticate, restrictTo('admin'), async (req, res) => {
       case 'day':
         currentPeriodSQL = `DATE(created_at) = CURDATE()`;
         previousPeriodSQL = `DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)`;
-        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
         currentPeriodSQL = `YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`;
         previousPeriodSQL = `YEARWEEK(created_at, 1) = YEARWEEK(DATE_SUB(CURDATE(), INTERVAL 1 WEEK), 1)`;
-        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
         currentPeriodSQL = `DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`;
         previousPeriodSQL = `DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m')`;
-        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
         currentPeriodSQL = `YEAR(created_at) = YEAR(CURDATE())`;
         previousPeriodSQL = `YEAR(created_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 YEAR))`;
-        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -227,22 +227,22 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
       case 'day':
         groupBy = 'DATE(o.created_at)';
         dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m-%d")';
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(o.created_at, 1)';
         dateFormat = 'DATE_FORMAT(DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY), "%Y-%m-%d")';
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
         groupBy = 'DATE_FORMAT(o.created_at, "%Y-%m")';
         dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m")';
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(o.created_at)';
         dateFormat = 'CAST(YEAR(o.created_at) AS CHAR)';
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -254,12 +254,14 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
         COUNT(DISTINCT o.id) as orderCount,
         COALESCE(SUM(oi.total_price), 0) as sales,
         COALESCE(AVG(oi.total_price), 0) as avgOrderValue
-      FROM order_items oi
-      JOIN orders o ON oi.order_id = o.id
+      FROM orders o
+      LEFT JOIN order_items oi ON o.id = oi.order_id
       WHERE o.status IN ('approved', 'completed') AND ${timeFilter}
       GROUP BY ${groupBy}
       ORDER BY MIN(o.created_at) ASC
     `);
+
+    console.log('Sales data query result length:', salesData.length);
 
     const formattedSalesData = salesData.map(item => ({
       period: String(item.period || ''),
@@ -285,22 +287,22 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
       case 'day':
         groupBy = 'DATE(created_at)';
         dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(created_at, 1)';
         dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
         groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
         dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(created_at)';
         dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -315,6 +317,8 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
       GROUP BY ${groupBy}
       ORDER BY MIN(created_at) ASC
     `);
+
+    console.log('User growth data query result length:', userGrowthData.length);
 
     const formattedUserGrowthData = userGrowthData.map(item => ({
       period: String(item.period || ''),
@@ -338,22 +342,22 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
       case 'day':
         groupBy = 'DATE(created_at)';
         dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(created_at, 1)';
         dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
         groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
         dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(created_at)';
         dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
-        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -372,6 +376,8 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
       GROUP BY ${groupBy}
       ORDER BY MIN(created_at) ASC
     `);
+
+    console.log('Order growth data query result length:', orderGrowthData.length);
 
     const formattedOrderGrowthData = orderGrowthData.map(item => ({
       period: String(item.period || ''),
@@ -397,19 +403,19 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
     
     switch (period) {
       case 'day':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
     }
 
     const popularProducts = await query(`
@@ -431,6 +437,8 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
       ORDER BY totalSales DESC
       LIMIT 10
     `);
+
+    console.log('Popular products query result length:', popularProducts.length);
 
     const formattedPopularProducts = popularProducts.map(item => ({
       id: item.id,
@@ -484,19 +492,19 @@ router.get('/category-performance', authenticate, restrictTo('admin'), async (re
     
     switch (period) {
       case 'day':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`;
         break;
       case 'week':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 26 WEEK)`;
         break;
       case 'month':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
         break;
       case 'year':
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 10 YEAR)`;
         break;
       default:
-        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)`;
     }
 
     const categoryPerformance = await query(`
