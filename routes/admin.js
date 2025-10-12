@@ -5,138 +5,244 @@ const router = express.Router();
 
 // Helper function to calculate percentage change
 const calculatePercentageChange = (current, previous) => {
-  if (previous === 0) return current > 0 ? 100 : 0; // Handle division by zero
+  if (previous === 0) return current > 0 ? 100 : 0;
   return ((current - previous) / previous) * 100;
 };
 
-// Admin stats overview
+// Admin stats overview - FIXED to show period-specific data
 router.get('/stats', authenticate, restrictTo('admin'), async (req, res) => {
   try {
-    const { period = 'month' } = req.query; // Get period from query (default: month)
+    const { period = 'month' } = req.query;
     
-    // Define date ranges based on period (for single-table queries)
-    let currentPeriodSQL, previousPeriodSQL;
+    let currentPeriodSQL, previousPeriodSQL, timeRangeSQL;
+    
+    // Define SQL filters for current period, previous period, and time range
     switch (period) {
       case 'day':
         currentPeriodSQL = `DATE(created_at) = CURDATE()`;
         previousPeriodSQL = `DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
         break;
       case 'week':
         currentPeriodSQL = `YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`;
         previousPeriodSQL = `YEARWEEK(created_at, 1) = YEARWEEK(DATE_SUB(CURDATE(), INTERVAL 1 WEEK), 1)`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
         break;
       case 'month':
-        currentPeriodSQL = `YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())`;
-        previousPeriodSQL = `YEAR(created_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH)) AND MONTH(created_at) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))`;
+        currentPeriodSQL = `DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`;
+        previousPeriodSQL = `DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m')`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
         break;
       case 'year':
         currentPeriodSQL = `YEAR(created_at) = YEAR(CURDATE())`;
         previousPeriodSQL = `YEAR(created_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 YEAR))`;
+        timeRangeSQL = `created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
     }
 
-    // For revenue queries (joined tables), qualify created_at to avoid ambiguity
+    // For revenue queries with orders table alias
     const currentPeriodForRevenue = currentPeriodSQL.replace(/created_at/g, 'o.created_at');
     const previousPeriodForRevenue = previousPeriodSQL.replace(/created_at/g, 'o.created_at');
+    const timeRangeForRevenue = timeRangeSQL.replace(/created_at/g, 'o.created_at');
 
-    // Current period queries (period-specific metrics)
-    const totalUsers = await query(`SELECT COUNT(*) as count FROM users WHERE ${currentPeriodSQL}`);
-    const totalProducts = await query(`SELECT COUNT(*) as count FROM products WHERE ${currentPeriodSQL}`);
-    const totalOrders = await query(`SELECT COUNT(*) as count FROM orders WHERE ${currentPeriodSQL}`);
-    const pendingOrders = await query(`SELECT COUNT(*) as count FROM orders WHERE status = "pending" AND ${currentPeriodSQL}`);
-    const completedOrders = await query(`SELECT COUNT(*) as count FROM orders WHERE status = "completed" AND ${currentPeriodSQL}`);
-    const totalRevenueQuery = await query(`
-      SELECT SUM(oi.total_price) as revenue 
-      FROM order_items oi 
-      JOIN orders o ON oi.order_id = o.id 
-      WHERE o.status = "completed" AND ${currentPeriodForRevenue}
+    console.log(`Fetching stats for period: ${period}`);
+    console.log(`Current period SQL: ${currentPeriodSQL}`);
+    console.log(`Time range SQL: ${timeRangeSQL}`);
+
+    // === CURRENT PERIOD STATS (what shows in the cards) ===
+    
+    // Users in current period
+    const [currentUsers] = await query(`
+      SELECT COUNT(*) as count 
+      FROM users 
+      WHERE role = 'client' AND ${currentPeriodSQL}
     `);
-    const totalMessages = await query(`SELECT COUNT(*) as count FROM contact_messages WHERE ${currentPeriodSQL}`);
-    const unreadMessages = await query(`SELECT COUNT(*) as count FROM contact_messages WHERE status = "unread" AND ${currentPeriodSQL}`);
-    const totalCategories = await query(`SELECT COUNT(*) as count FROM categories WHERE ${currentPeriodSQL}`);
-
-    // Previous period queries for percentage changes
-    const prevTotalUsers = await query(`SELECT COUNT(*) as count FROM users WHERE ${previousPeriodSQL}`);
-    const prevTotalProducts = await query(`SELECT COUNT(*) as count FROM products WHERE ${previousPeriodSQL}`);
-    const prevTotalOrders = await query(`SELECT COUNT(*) as count FROM orders WHERE ${previousPeriodSQL}`);
-    const prevTotalRevenueQuery = await query(`
-      SELECT SUM(oi.total_price) as revenue 
+    
+    const [prevUsers] = await query(`
+      SELECT COUNT(*) as count 
+      FROM users 
+      WHERE role = 'client' AND ${previousPeriodSQL}
+    `);
+    
+    // Products in current period
+    const [currentProducts] = await query(`
+      SELECT COUNT(*) as count 
+      FROM products 
+      WHERE is_deleted = 0 AND ${currentPeriodSQL}
+    `);
+    
+    const [prevProducts] = await query(`
+      SELECT COUNT(*) as count 
+      FROM products 
+      WHERE is_deleted = 0 AND ${previousPeriodSQL}
+    `);
+    
+    // Orders in current period
+    const [currentOrders] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE ${currentPeriodSQL}
+    `);
+    
+    const [prevOrders] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE ${previousPeriodSQL}
+    `);
+    
+    // Order statuses in current period
+    const [currentPending] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE status = 'pending' AND ${currentPeriodSQL}
+    `);
+    
+    const [currentCompleted] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE status = 'completed' AND ${currentPeriodSQL}
+    `);
+    
+    const [currentApproved] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE status = 'approved' AND ${currentPeriodSQL}
+    `);
+    
+    const [currentCancelled] = await query(`
+      SELECT COUNT(*) as count 
+      FROM orders 
+      WHERE status = 'cancelled' AND ${currentPeriodSQL}
+    `);
+    
+    // Revenue for current period
+    const [currentRevenueRow] = await query(`
+      SELECT COALESCE(SUM(oi.total_price), 0) as revenue 
       FROM order_items oi 
       JOIN orders o ON oi.order_id = o.id 
-      WHERE o.status = "completed" AND ${previousPeriodForRevenue}
+      WHERE o.status IN ('approved', 'completed') AND ${currentPeriodForRevenue}
+    `);
+    
+    // Revenue for previous period
+    const [prevRevenueRow] = await query(`
+      SELECT COALESCE(SUM(oi.total_price), 0) as revenue 
+      FROM order_items oi 
+      JOIN orders o ON oi.order_id = o.id 
+      WHERE o.status IN ('approved', 'completed') AND ${previousPeriodForRevenue}
+    `);
+
+    // === LIFETIME TOTALS (for reference) ===
+    const [lifetimeUsers] = await query(`SELECT COUNT(*) as count FROM users WHERE role = 'client'`);
+    const [lifetimeProducts] = await query(`SELECT COUNT(*) as count FROM products WHERE is_deleted = 0`);
+    const [lifetimeOrders] = await query(`SELECT COUNT(*) as count FROM orders`);
+    const [totalCategories] = await query(`SELECT COUNT(*) as count FROM categories`);
+    
+    const [lifetimeRevenueRow] = await query(`
+      SELECT COALESCE(SUM(oi.total_price), 0) as revenue 
+      FROM order_items oi 
+      JOIN orders o ON oi.order_id = o.id 
+      WHERE o.status IN ('approved', 'completed')
     `);
 
     // Calculate percentage changes
-    const userChange = calculatePercentageChange(totalUsers[0].count, prevTotalUsers[0].count);
-    const productChange = calculatePercentageChange(totalProducts[0].count, prevTotalProducts[0].count);
-    const orderChange = calculatePercentageChange(totalOrders[0].count, prevTotalOrders[0].count);
+    const userChange = calculatePercentageChange(
+      currentUsers?.count || 0, 
+      prevUsers?.count || 0
+    );
+    
+    const productChange = calculatePercentageChange(
+      currentProducts?.count || 0, 
+      prevProducts?.count || 0
+    );
+    
+    const orderChange = calculatePercentageChange(
+      currentOrders?.count || 0, 
+      prevOrders?.count || 0
+    );
+    
     const revenueChange = calculatePercentageChange(
-      parseFloat(totalRevenueQuery[0]?.revenue || 0),
-      parseFloat(prevTotalRevenueQuery[0]?.revenue || 0)
+      parseFloat(currentRevenueRow?.revenue || 0),
+      parseFloat(prevRevenueRow?.revenue || 0)
     );
 
+    console.log('Period stats:', {
+      currentUsers: currentUsers?.count,
+      prevUsers: prevUsers?.count,
+      currentOrders: currentOrders?.count,
+      prevOrders: prevOrders?.count,
+      currentRevenue: currentRevenueRow?.revenue,
+      prevRevenue: prevRevenueRow?.revenue
+    });
+
     const stats = {
-      totalUsers: totalUsers[0].count,
-      totalProducts: totalProducts[0].count,
-      totalOrders: totalOrders[0].count,
-      pendingOrders: pendingOrders[0].count,
-      completedOrders: completedOrders[0].count,
-      totalMessages: totalMessages[0].count,
-      unreadMessages: unreadMessages[0].count,
-      totalRevenue: parseFloat(totalRevenueQuery[0]?.revenue || 0),
-      totalCategories: totalCategories[0].count,
-      userChange,
-      productChange,
-      orderChange,
-      revenueChange,
+      // Current period stats (changes with filter)
+      totalUsers: currentUsers?.count || 0,
+      totalProducts: currentProducts?.count || 0,
+      totalOrders: currentOrders?.count || 0,
+      pendingOrders: currentPending?.count || 0,
+      completedOrders: currentCompleted?.count || 0,
+      approvedOrders: currentApproved?.count || 0,
+      cancelledOrders: currentCancelled?.count || 0,
+      totalRevenue: parseFloat(currentRevenueRow?.revenue || 0),
+      
+      // Previous period (for comparison)
+      previousPeriodRevenue: parseFloat(prevRevenueRow?.revenue || 0),
+      
+      // Percentage changes
+      userChange: parseFloat(userChange.toFixed(2)),
+      productChange: parseFloat(productChange.toFixed(2)),
+      orderChange: parseFloat(orderChange.toFixed(2)),
+      revenueChange: parseFloat(revenueChange.toFixed(2)),
+      
+      // Lifetime totals (for context)
+      lifetimeUsers: lifetimeUsers?.count || 0,
+      lifetimeProducts: lifetimeProducts?.count || 0,
+      lifetimeOrders: lifetimeOrders?.count || 0,
+      lifetimeRevenue: parseFloat(lifetimeRevenueRow?.revenue || 0),
+      totalCategories: totalCategories?.count || 0,
+      
+      period
     };
 
-    console.log('Fetched admin stats:', stats);
+    console.log('Stats response:', stats);
     res.json(stats);
   } catch (error) {
     console.error('Admin stats error:', error.message, error.stack);
-    // Graceful fallback to 0s for real-world robustness
     res.status(500).json({ 
       error: 'Failed to fetch stats', 
-      details: error.message,
-      fallback: { 
-        totalUsers: 0, 
-        totalProducts: 0, 
-        totalOrders: 0, 
-        totalRevenue: 0, 
-        pendingOrders: 0, 
-        completedOrders: 0, 
-        totalMessages: 0, 
-        unreadMessages: 0, 
-        totalCategories: 0,
-        userChange: 0,
-        productChange: 0,
-        orderChange: 0,
-        revenueChange: 0
-      }
+      details: error.message
     });
   }
 });
 
-// Sales over time (for chart)
+// Sales over time
 router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy;
+    let groupBy, timeFilter, dateFormat;
+    
     switch (period) {
       case 'day':
         groupBy = 'DATE(o.created_at)';
+        dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m-%d")';
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(o.created_at, 1)';
+        dateFormat = 'DATE_FORMAT(DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY), "%Y-%m-%d")';
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
         break;
       case 'month':
-        groupBy = 'CONCAT(MONTH(o.created_at), "-", YEAR(o.created_at))';
+        groupBy = 'DATE_FORMAT(o.created_at, "%Y-%m")';
+        dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m")';
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(o.created_at)';
+        dateFormat = 'CAST(YEAR(o.created_at) AS CHAR)';
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -144,24 +250,24 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
 
     const salesData = await query(`
       SELECT 
-        ${groupBy} as period,
-        COUNT(o.id) as orderCount,
-        SUM(oi.total_price) as sales
+        ${dateFormat} as period,
+        COUNT(DISTINCT o.id) as orderCount,
+        COALESCE(SUM(oi.total_price), 0) as sales,
+        COALESCE(AVG(oi.total_price), 0) as avgOrderValue
       FROM orders o
-      JOIN order_items oi ON o.id = oi.order_id
-      WHERE o.status = "completed"
+      LEFT JOIN order_items oi ON o.id = oi.order_id
+      WHERE o.status IN ('approved', 'completed') AND ${timeFilter}
       GROUP BY ${groupBy}
-      ORDER BY MIN(o.created_at) DESC
-      LIMIT 12
+      ORDER BY MIN(o.created_at) ASC
     `);
 
     const formattedSalesData = salesData.map(item => ({
-      period: item.period,
+      period: String(item.period || ''),
       orderCount: parseInt(item.orderCount) || 0,
       sales: parseFloat(item.sales) || 0,
-    })).reverse(); // Reverse for chronological ascending order
+      avgOrderValue: parseFloat(item.avgOrderValue) || 0
+    }));
 
-    console.log('Fetched sales over time:', formattedSalesData);
     res.json(formattedSalesData);
   } catch (error) {
     console.error('Sales over time error:', error.message, error.stack);
@@ -169,23 +275,32 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
   }
 });
 
-// User growth over time (for chart)
+// User growth over time
 router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy;
+    let groupBy, timeFilter, dateFormat;
+    
     switch (period) {
       case 'day':
         groupBy = 'DATE(created_at)';
+        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(created_at, 1)';
+        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
         break;
       case 'month':
-        groupBy = 'CONCAT(MONTH(created_at), "-", YEAR(created_at))';
+        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
+        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(created_at)';
+        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -193,20 +308,19 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
 
     const userGrowthData = await query(`
       SELECT 
-        ${groupBy} as period,
+        ${dateFormat} as period,
         COUNT(id) as newUsers
       FROM users
+      WHERE role = 'client' AND ${timeFilter}
       GROUP BY ${groupBy}
-      ORDER BY MIN(created_at) DESC
-      LIMIT 12
+      ORDER BY MIN(created_at) ASC
     `);
 
     const formattedUserGrowthData = userGrowthData.map(item => ({
-      period: item.period,
-      newUsers: parseInt(item.newUsers) || 0,
-    })).reverse(); // Reverse for chronological ascending order
+      period: String(item.period || ''),
+      newUsers: parseInt(item.newUsers) || 0
+    }));
 
-    console.log('Fetched user growth:', formattedUserGrowthData);
     res.json(formattedUserGrowthData);
   } catch (error) {
     console.error('User growth error:', error.message, error.stack);
@@ -214,23 +328,32 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
   }
 });
 
-// Order growth over time (for chart)
+// Order growth over time
 router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy;
+    let groupBy, timeFilter, dateFormat;
+    
     switch (period) {
       case 'day':
         groupBy = 'DATE(created_at)';
+        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m-%d")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
         break;
       case 'week':
         groupBy = 'YEARWEEK(created_at, 1)';
+        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
         break;
       case 'month':
-        groupBy = 'CONCAT(MONTH(created_at), "-", YEAR(created_at))';
+        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
+        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
         break;
       case 'year':
         groupBy = 'YEAR(created_at)';
+        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
@@ -238,20 +361,27 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
 
     const orderGrowthData = await query(`
       SELECT 
-        ${groupBy} as period,
-        COUNT(id) as newOrders
+        ${dateFormat} as period,
+        COUNT(id) as newOrders,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingOrders,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approvedOrders,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completedOrders,
+        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelledOrders
       FROM orders
+      WHERE ${timeFilter}
       GROUP BY ${groupBy}
-      ORDER BY MIN(created_at) DESC
-      LIMIT 12
+      ORDER BY MIN(created_at) ASC
     `);
 
     const formattedOrderGrowthData = orderGrowthData.map(item => ({
-      period: item.period,
+      period: String(item.period || ''),
       newOrders: parseInt(item.newOrders) || 0,
-    })).reverse(); // Reverse for chronological ascending order
+      pendingOrders: parseInt(item.pendingOrders) || 0,
+      approvedOrders: parseInt(item.approvedOrders) || 0,
+      completedOrders: parseInt(item.completedOrders) || 0,
+      cancelledOrders: parseInt(item.cancelledOrders) || 0
+    }));
 
-    console.log('Fetched order growth:', formattedOrderGrowthData);
     res.json(formattedOrderGrowthData);
   } catch (error) {
     console.error('Order growth error:', error.message, error.stack);
@@ -259,16 +389,45 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
   }
 });
 
-// Top 10 popular products (sorted by orders)
+// Top 10 popular products
 router.get('/popular-products', authenticate, restrictTo('admin'), async (req, res) => {
   try {
+    const { period = 'month' } = req.query;
+    let timeFilter;
+    
+    switch (period) {
+      case 'day':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+        break;
+      case 'week':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
+        break;
+      case 'month':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
+        break;
+      case 'year':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
+        break;
+      default:
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
+    }
+
     const popularProducts = await query(`
-      SELECT p.id, p.name, SUM(oi.quantity) as totalQuantity, SUM(oi.total_price) as totalSales
+      SELECT 
+        p.id, 
+        p.name,
+        p.price_per_day,
+        COUNT(DISTINCT o.id) as orderCount,
+        SUM(oi.quantity) as totalQuantity, 
+        COALESCE(SUM(oi.total_price), 0) as totalSales,
+        COALESCE(AVG(oi.total_price), 0) as avgSaleValue
       FROM products p
       JOIN order_items oi ON p.id = oi.product_id
       JOIN orders o ON oi.order_id = o.id
-      WHERE o.status = "completed"
-      GROUP BY p.id, p.name
+      WHERE o.status IN ('approved', 'completed') 
+        AND ${timeFilter} 
+        AND p.is_deleted = 0
+      GROUP BY p.id, p.name, p.price_per_day
       ORDER BY totalSales DESC
       LIMIT 10
     `);
@@ -276,11 +435,13 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
     const formattedPopularProducts = popularProducts.map(item => ({
       id: item.id,
       name: item.name,
+      pricePerDay: parseFloat(item.price_per_day) || 0,
+      orderCount: parseInt(item.orderCount) || 0,
       totalQuantity: parseInt(item.totalQuantity) || 0,
       totalSales: parseFloat(item.totalSales) || 0,
+      avgSaleValue: parseFloat(item.avgSaleValue) || 0
     }));
 
-    console.log('Fetched popular products:', formattedPopularProducts);
     res.json(formattedPopularProducts);
   } catch (error) {
     console.error('Popular products error:', error.message, error.stack);
@@ -288,36 +449,88 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
   }
 });
 
-// Fetch contact messages
-router.get('/contact-messages', authenticate, restrictTo('admin'), async (req, res) => {
+// Revenue breakdown by status
+router.get('/revenue-breakdown', authenticate, restrictTo('admin'), async (req, res) => {
   try {
-    const messages = await query(`
-      SELECT id, name, email, company, subject, message, status, created_at 
-      FROM contact_messages 
-      ORDER BY created_at DESC
+    const revenueBreakdown = await query(`
+      SELECT 
+        o.status,
+        COUNT(DISTINCT o.id) as orderCount,
+        COALESCE(SUM(oi.total_price), 0) as totalRevenue
+      FROM orders o
+      LEFT JOIN order_items oi ON o.id = oi.order_id
+      GROUP BY o.status
+      ORDER BY totalRevenue DESC
     `);
-    res.json(messages);
+
+    const formattedBreakdown = revenueBreakdown.map(item => ({
+      status: item.status,
+      orderCount: parseInt(item.orderCount) || 0,
+      totalRevenue: parseFloat(item.totalRevenue) || 0
+    }));
+
+    res.json(formattedBreakdown);
   } catch (error) {
-    console.error('Fetch contact messages error:', error.message, error.stack);
-    res.status(500).json({ error: 'Failed to fetch contact messages', details: error.message });
+    console.error('Revenue breakdown error:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch revenue breakdown', details: error.message });
   }
 });
 
-// Update contact message status
-router.put('/contact-messages/:id/status', authenticate, restrictTo('admin'), async (req, res) => {
+// Category performance analytics
+router.get('/category-performance', authenticate, restrictTo('admin'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!['unread', 'read', 'responded'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
+    const { period = 'month' } = req.query;
+    let timeFilter;
+    
+    switch (period) {
+      case 'day':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`;
+        break;
+      case 'week':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 WEEK)`;
+        break;
+      case 'month':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
+        break;
+      case 'year':
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 5 YEAR)`;
+        break;
+      default:
+        timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`;
     }
 
-    await query('UPDATE contact_messages SET status = ? WHERE id = ?', [status, id]);
-    res.json({ message: 'Message status updated' });
+    const categoryPerformance = await query(`
+      SELECT 
+        COALESCE(c.name, 'Uncategorized') as categoryName,
+        COALESCE(c.id, 0) as categoryId,
+        COUNT(DISTINCT p.id) as productCount,
+        COUNT(DISTINCT o.id) as orderCount,
+        SUM(oi.quantity) as totalQuantityRented,
+        COALESCE(SUM(oi.total_price), 0) as totalRevenue
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      JOIN order_items oi ON p.id = oi.product_id
+      JOIN orders o ON oi.order_id = o.id
+      WHERE o.status IN ('approved', 'completed') 
+        AND ${timeFilter} 
+        AND p.is_deleted = 0
+      GROUP BY c.id, c.name
+      ORDER BY totalRevenue DESC
+    `);
+
+    const formattedCategoryPerformance = categoryPerformance.map(item => ({
+      categoryId: parseInt(item.categoryId) || 0,
+      categoryName: item.categoryName,
+      productCount: parseInt(item.productCount) || 0,
+      orderCount: parseInt(item.orderCount) || 0,
+      totalQuantityRented: parseInt(item.totalQuantityRented) || 0,
+      totalRevenue: parseFloat(item.totalRevenue) || 0
+    }));
+
+    res.json(formattedCategoryPerformance);
   } catch (error) {
-    console.error('Update contact message status error:', error.message, error.stack);
-    res.status(500).json({ error: 'Failed to update message status', details: error.message });
+    console.error('Category performance error:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch category performance', details: error.message });
   }
 });
 
