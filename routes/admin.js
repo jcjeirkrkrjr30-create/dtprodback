@@ -221,45 +221,49 @@ router.get('/stats', authenticate, restrictTo('admin'), async (req, res) => {
 router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let groupByExpr, timeFilter, selectExpr;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(o.created_at)';
-        dateFormat = 'DATE_FORMAT(DATE(o.created_at), "%Y-%m-%d")';
+        groupByExpr = 'DATE(o.created_at)';
+        selectExpr = 'DATE(o.created_at)';
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(o.created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY), "%Y-%m-%d")';
+        groupByExpr = 'YEARWEEK(o.created_at, 1)';
+        selectExpr = 'DATE(DATE_SUB(o.created_at, INTERVAL WEEKDAY(o.created_at) DAY))';
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(o.created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(o.created_at, "%Y-%m")';
+        groupByExpr = "DATE_FORMAT(o.created_at, '%Y-%m')";
+        selectExpr = "DATE_FORMAT(o.created_at, '%Y-%m')";
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(o.created_at)';
-        dateFormat = 'CAST(YEAR(o.created_at) AS CHAR)';
+        groupByExpr = 'YEAR(o.created_at)';
+        selectExpr = 'YEAR(o.created_at)';
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
     }
 
+    console.log(`Sales over time query - Period: ${period}, Filter: ${timeFilter}`);
+
     const salesData = await query(`
       SELECT 
-        ${dateFormat} as period,
+        ${selectExpr} as period,
         COUNT(DISTINCT o.id) as orderCount,
         COALESCE(SUM(oi.total_price), 0) as sales,
         COALESCE(AVG(oi.total_price), 0) as avgOrderValue
       FROM order_items oi
       JOIN orders o ON oi.order_id = o.id
       WHERE o.status IN ('approved', 'completed') AND ${timeFilter}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
+      GROUP BY ${groupByExpr}
+      ORDER BY ${groupByExpr} ASC
     `);
+
+    console.log(`Sales data returned: ${salesData.length} records`);
 
     const formattedSalesData = salesData.map(item => ({
       period: String(item.period || ''),
@@ -279,42 +283,46 @@ router.get('/sales-over-time', authenticate, restrictTo('admin'), async (req, re
 router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let groupByExpr, timeFilter, selectExpr;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(created_at)';
-        dateFormat = 'DATE_FORMAT(DATE(created_at), "%Y-%m-%d")';
+        groupByExpr = 'DATE(created_at)';
+        selectExpr = 'DATE(created_at)';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        groupByExpr = 'YEARWEEK(created_at, 1)';
+        selectExpr = 'DATE(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY))';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        groupByExpr = "DATE_FORMAT(created_at, '%Y-%m')";
+        selectExpr = "DATE_FORMAT(created_at, '%Y-%m')";
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(created_at)';
-        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        groupByExpr = 'YEAR(created_at)';
+        selectExpr = 'YEAR(created_at)';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
     }
 
+    console.log(`User growth query - Period: ${period}, Filter: ${timeFilter}`);
+
     const userGrowthData = await query(`
       SELECT 
-        ${dateFormat} as period,
+        ${selectExpr} as period,
         COUNT(id) as newUsers
       FROM users
       WHERE role = 'client' AND ${timeFilter}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
+      GROUP BY ${groupByExpr}
+      ORDER BY ${groupByExpr} ASC
     `);
+
+    console.log(`User growth data returned: ${userGrowthData.length} records`);
 
     const formattedUserGrowthData = userGrowthData.map(item => ({
       period: String(item.period || ''),
@@ -332,36 +340,38 @@ router.get('/user-growth', authenticate, restrictTo('admin'), async (req, res) =
 router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) => {
   try {
     const { period = 'month' } = req.query;
-    let groupBy, timeFilter, dateFormat;
+    let groupByExpr, timeFilter, selectExpr;
     
     switch (period) {
       case 'day':
-        groupBy = 'DATE(created_at)';
-        dateFormat = 'DATE_FORMAT(DATE(created_at), "%Y-%m-%d")';
+        groupByExpr = 'DATE(created_at)';
+        selectExpr = 'DATE(created_at)';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)`;
         break;
       case 'week':
-        groupBy = 'YEARWEEK(created_at, 1)';
-        dateFormat = 'DATE_FORMAT(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY), "%Y-%m-%d")';
+        groupByExpr = 'YEARWEEK(created_at, 1)';
+        selectExpr = 'DATE(DATE_SUB(created_at, INTERVAL WEEKDAY(created_at) DAY))';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 WEEK)`;
         break;
       case 'month':
-        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
-        dateFormat = 'DATE_FORMAT(created_at, "%Y-%m")';
+        groupByExpr = "DATE_FORMAT(created_at, '%Y-%m')";
+        selectExpr = "DATE_FORMAT(created_at, '%Y-%m')";
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
         break;
       case 'year':
-        groupBy = 'YEAR(created_at)';
-        dateFormat = 'CAST(YEAR(created_at) AS CHAR)';
+        groupByExpr = 'YEAR(created_at)';
+        selectExpr = 'YEAR(created_at)';
         timeFilter = `created_at >= DATE_SUB(CURDATE(), INTERVAL 6 YEAR)`;
         break;
       default:
         return res.status(400).json({ error: 'Invalid period' });
     }
 
+    console.log(`Order growth query - Period: ${period}, Filter: ${timeFilter}`);
+
     const orderGrowthData = await query(`
       SELECT 
-        ${dateFormat} as period,
+        ${selectExpr} as period,
         COUNT(id) as newOrders,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingOrders,
         SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approvedOrders,
@@ -369,9 +379,11 @@ router.get('/order-growth', authenticate, restrictTo('admin'), async (req, res) 
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelledOrders
       FROM orders
       WHERE ${timeFilter}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
+      GROUP BY ${groupByExpr}
+      ORDER BY ${groupByExpr} ASC
     `);
+
+    console.log(`Order growth data returned: ${orderGrowthData.length} records`);
 
     const formattedOrderGrowthData = orderGrowthData.map(item => ({
       period: String(item.period || ''),
@@ -412,6 +424,8 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
         timeFilter = `o.created_at >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH)`;
     }
 
+    console.log(`Popular products query - Period: ${period}, Filter: ${timeFilter}`);
+
     const popularProducts = await query(`
       SELECT 
         p.id, 
@@ -431,6 +445,8 @@ router.get('/popular-products', authenticate, restrictTo('admin'), async (req, r
       ORDER BY totalSales DESC
       LIMIT 10
     `);
+
+    console.log(`Popular products returned: ${popularProducts.length} records`);
 
     const formattedPopularProducts = popularProducts.map(item => ({
       id: item.id,
